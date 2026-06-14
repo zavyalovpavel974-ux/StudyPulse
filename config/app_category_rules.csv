@@ -1,0 +1,98 @@
+app_label,category,note
+百词斩,study,英语学习
+百度翻译,study,翻译学习
+每日英语听力,study,英语学习
+欧路词典,study,词典
+网易有道词典,study,词典学习
+中国大学MOOC,study,在线课程
+TED,study,知识内容
+ChatGPT,study,AI学习助手
+DeepSeek,study,AI学习助手
+Gemini,study,AI学习助手
+Kimi,study,AI学习助手
+豆包,study,AI学习写作
+千问,study,AI学习助手
+CSDN,study,编程学习
+知乎,study,知识内容
+China Daily,study,英语阅读学习
+阅读,study,阅读学习
+学习公社,study,学习平台
+学习通,study,学习平台
+学信网,study,学业相关
+WPS Office,tool,办公工具
+WPS,tool,办公工具
+文档,tool,文档工具
+文件,tool,文件工具
+文件管理,tool,文件工具
+浏览器,tool,浏览器
+QQ浏览器,tool,浏览器
+夸克,tool,浏览器搜索
+悟空浏览器,tool,浏览器
+百度,tool,搜索
+Google,tool,搜索
+Gmail,tool,邮件
+百度网盘,tool,文件工具
+百度地图,tool,地图
+高德地图,tool,地图
+日历,tool,日程
+便签,tool,记录
+计算器,tool,工具
+录音,tool,工具
+企业微信,tool,协作工具
+微信,social,社交
+QQ,social,社交
+飞书,social,协作沟通
+钉钉,social,协作沟通
+微博,social,社交资讯
+Instagram,social,社交
+一加社区,social,社区
+贴吧,social,社区
+百度贴吧,social,社区
+抖音,entertainment,短视频
+哔哩哔哩,entertainment,视频内容
+爱奇艺,entertainment,视频
+YouTube,entertainment,视频内容
+小红书,entertainment,内容社区
+懂球帝,entertainment,体育资讯
+OPPO 视频,entertainment,视频
+央视频,entertainment,视频资讯
+咪咕视频,entertainment,视频
+网易云音乐,entertainment,音乐
+酷我音乐,entertainment,音乐
+音乐,entertainment,音乐
+闲鱼,entertainment,闲逛交易
+识货,entertainment,消费内容
+红果免费短剧,entertainment,短剧
+虎牙直播,entertainment,直播
+王者荣耀,game,游戏
+王者营地,game,游戏社区
+金铲铲之战,game,游戏
+原神,game,游戏
+Steam,game,游戏平台
+小游戏,game,游戏
+游戏中心,game,游戏平台
+游戏助手,game,游戏工具
+com.tencent.mm,social,package: 微信
+com.ss.android.ugc.aweme,entertainment,package: 抖音
+com.dongqiudi.news,entertainment,package: 懂球帝
+com.zmzx.college.search,study,package: 大学搜题类学习工具
+com.tencent.mobileqq,social,package: QQ
+com.tencent.qqmusic,entertainment,package: QQ音乐
+com.android.settings,other,package: 设置
+com.android.launcher,other,package: 系统桌面
+com.studypulse.android,tool,package: StudyPulse
+com.oplus.camera,other,package: 相机
+com.coloros.weather2,tool,package: 天气
+com.android.documentsui,tool,package: 文件
+com.heytap.browser,tool,package: 浏览器
+com.heytap.quicksearchbox,tool,package: 全局搜索
+com.heytap.cloud,other,package: 云服务
+com.oplus.screenshot,other,package: 截屏
+com.coloros.filemanager,tool,package: 文件管理
+com.android.systemui,other,package: 系统界面
+com.oplus.ota,other,package: 软件更新
+com.oplus.securitypermission,other,package: 权限管理
+com.heytap.market,tool,package: 软件商店
+com.android.photopicker,other,package: 照片选择器
+com.android.permissioncontroller,other,package: 权限控制器
+com.android.packageinstaller,other,package: 软件包安装程序

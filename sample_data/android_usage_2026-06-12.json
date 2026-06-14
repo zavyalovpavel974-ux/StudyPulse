@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "device_type": "android",
+  "date": "2026-06-12",
+  "generated_at": "2026-06-12 23:55:00",
+  "apps": [
+    {
+      "package_name": "com.netease.youdao",
+      "app_label": "Youdao",
+      "category": "study",
+      "foreground_minutes": 48.0,
+      "open_count": 6,
+      "last_used_at": "2026-06-12 21:14:03"
+    },
+    {
+      "package_name": "cn.wps.moffice_eng",
+      "app_label": "WPS Office",
+      "category": "tool",
+      "foreground_minutes": 32.5,
+      "open_count": 5,
+      "last_used_at": "2026-06-12 22:01:44"
+    },
+    {
+      "package_name": "com.android.chrome",
+      "app_label": "Chrome",
+      "category": "tool",
+      "foreground_minutes": 55.0,
+      "open_count": 18,
+      "last_used_at": "2026-06-12 22:36:09"
+    },
+    {
+      "package_name": "com.tencent.mm",
+      "app_label": "WeChat",
+      "category": "social",
+      "foreground_minutes": 76.0,
+      "open_count": 31,
+      "last_used_at": "2026-06-12 23:04:20"
+    },
+    {
+      "package_name": "com.ss.android.ugc.aweme",
+      "app_label": "Douyin",
+      "category": "entertainment",
+      "foreground_minutes": 92.0,
+      "open_count": 14,
+      "last_used_at": "2026-06-12 23:40:12"
+    },
+    {
+      "package_name": "tv.danmaku.bili",
+      "app_label": "Bilibili",
+      "category": "entertainment",
+      "foreground_minutes": 41.0,
+      "open_count": 8,
+      "last_used_at": "2026-06-12 20:52:33"
+    },
+    {
+      "package_name": "com.tencent.tmgp.sgame",
+      "app_label": "Honor of Kings",
+      "category": "game",
+      "foreground_minutes": 28.0,
+      "open_count": 2,
+      "last_used_at": "2026-06-12 19:12:01"
+    }
+  ]
+}

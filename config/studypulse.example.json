@@ -1,0 +1,43 @@
+{
+  "android": {
+    "export_inbox_dir": "%USERPROFILE%\\Desktop\\.json",
+    "adb_package_name": "com.studypulse.android",
+    "adb_remote_dir": "/sdcard/Android/data/com.studypulse.android/files/exports"
+  },
+  "study_roots": [
+    {
+      "alias": "my-study-folder",
+      "path": "D:\\StudyPulse\\study-files"
+    }
+  ],
+  "tracked_extensions": [
+    ".R",
+    ".md",
+    ".Rmd",
+    ".qmd",
+    ".csv",
+    ".xlsx",
+    ".docx",
+    ".pptx",
+    ".html"
+  ],
+  "mimo": {
+    "provider": "Xiaomi MiMo",
+    "model": "mimo-v2.5-pro",
+    "openai_compatible": true,
+    "api_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+    "api_key_env": "MIMO_API_KEY"
+  },
+  "email": {
+    "recipients": [
+      "your-email@example.com"
+    ],
+    "sender_env": "STUDYPULSE_NOTIFY_EMAIL_FROM",
+    "recipients_env": "STUDYPULSE_NOTIFY_EMAIL_TO"
+  },
+  "features": {
+    "enable_adb_sync": true,
+    "enable_ai_review": true,
+    "enable_email": true
+  }
+}

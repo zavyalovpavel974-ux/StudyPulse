@@ -1,0 +1,7 @@
+date,root_alias,relative_path,path_hash,extension,file_size_bytes,last_modified_at,activity_type
+2026-06-12,R-homework,week4/analysis.R,hash_001,.R,8421,2026-06-12 15:42:18,modified
+2026-06-12,R-homework,week4/plot_sleep.csv,hash_002,.csv,12452,2026-06-12 15:58:09,modified
+2026-06-12,R-homework,week4/report.Rmd,hash_003,.Rmd,10534,2026-06-12 16:26:44,modified
+2026-06-12,R-homework,week4/output/sleep_plot.html,hash_004,.html,48322,2026-06-12 16:33:20,created
+2026-06-12,R-homework,notes/statistics_notes.docx,hash_005,.docx,38120,2026-06-12 21:07:55,modified
+2026-06-12,R-homework,data/raw_study_log.xlsx,hash_006,.xlsx,17482,2026-06-12 21:19:03,modified
