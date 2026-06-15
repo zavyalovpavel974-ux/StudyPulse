@@ -35,8 +35,8 @@ APP_NAME_MAP = {
     "com.android.documentsui": "文件",
     "com.google.android.gms": "Google Play 服务",
     "com.google.android.googlequicksearchbox": "Google 搜索",
+    "com.plan.kot32.tomatotime": "番茄 ToDo",
 }
-
 
 def load_payload() -> dict:
     conn = sqlite3.connect(DB_PATH)
@@ -109,13 +109,25 @@ def load_payload() -> dict:
                 (latest_date,),
             )
         ]
+        focus_sessions = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT source, title, start_time, end_time, minutes
+                FROM focus_sessions
+                WHERE date = ?
+                ORDER BY COALESCE(start_time, ''), id
+                """,
+                (latest_date,),
+            )
+        ]
         output_trends = [
             dict(row)
             for row in conn.execute(
                 """
                 SELECT date, study_files_modified_count, study_files_created_count,
                        total_study_files_count, study_files_modified_7d_count,
-                       r_command_count, learning_output_score
+                       r_command_count, focus_minutes, focus_session_count, learning_output_score
                 FROM daily_metrics
                 ORDER BY date
                 """
@@ -147,6 +159,7 @@ def load_payload() -> dict:
             "app_trends": app_trends,
             "app_hourly": app_hourly,
             "files": files,
+            "focus_sessions": focus_sessions,
             "output_trends": output_trends,
             "r_summary": dict(r_summary) if r_summary else {},
             "review": dict(review) if review else {},
@@ -351,14 +364,14 @@ def render(payload: dict) -> str:
       </div>
       <div class="sync-rail">
         <div class="node active" data-node="phone"><small>01 Collect</small><strong>手机使用聚合</strong></div>
-        <div class="node" data-node="windows"><small>02 Detect</small><strong>文件产出轨迹</strong></div>
+        <div class="node" data-node="windows"><small>02 Detect</small><strong>Windows 学习记录</strong></div>
         <div class="node" data-node="rstudio"><small>03 Parse</small><strong>R 学习命令</strong></div>
         <div class="node" data-node="mimo"><small>04 Review</small><strong>AI 每日复盘</strong></div>
       </div>
       <div class="actions">
         <button class="active" data-tab="overview">总览</button>
         <button data-tab="apps">App 分析</button>
-        <button data-tab="output">产出证据</button>
+        <button data-tab="output">Windows 学习</button>
         <button data-tab="ai">AI 复盘</button>
         <button id="themeBtn">切换主题</button>
       </div>
@@ -381,12 +394,12 @@ def render(payload: dict) -> str:
   <section class="layout tab-page" id="tab-overview">
     <div class="panel">
       <div class="tabs">
-        <span class="chip active" data-metric="learning_input_score">学习投入</span>
-        <span class="chip" data-metric="learning_output_score">学习产出</span>
+        <span class="chip active" data-metric="learning_input_score">学习情况</span>
+        <span class="chip" data-metric="learning_output_score">Windows 学习</span>
         <span class="chip" data-metric="distraction_risk_score">分心风险</span>
         <span class="chip" data-metric="r_activity_score">R 活跃度</span>
       </div>
-      <h2 id="chartTitle">学习投入趋势</h2>
+      <h2 id="chartTitle">学习情况趋势</h2>
       <svg id="trendChart" class="chart" viewBox="0 0 760 260"></svg>
       <div class="chart-meta" id="metricMeta"></div>
     </div>
@@ -441,8 +454,9 @@ def render(payload: dict) -> str:
       <h2>RStudio / R 学习痕迹</h2>
       <div id="rSummary"></div>
     </div>
+    <div class="panel wide" id="focusSessions"></div>
     <div class="panel wide">
-      <h2>学习产出多日趋势</h2>
+      <h2>Windows 学习多日趋势</h2>
       <svg id="outputTrendChart" class="chart" viewBox="0 0 760 260"></svg>
       <div class="chart-meta" id="outputTrendMeta"></div>
     </div>
@@ -465,21 +479,22 @@ def render(payload: dict) -> str:
 const payload = {payload_json};
 const appNameMap = {app_name_map_json};
 const colors = {{study:"#3b82f6", tool:"#22c55e", social:"#a855f7", entertainment:"#f97316", game:"#ef4444", other:"#64748b"}};
-const labels = {{learning_input_score:"学习投入趋势", learning_output_score:"学习产出趋势", distraction_risk_score:"分心风险趋势", r_activity_score:"R 活跃度趋势"}};
+const labels = {{learning_input_score:"学习情况趋势", learning_output_score:"Windows 学习趋势", distraction_risk_score:"分心风险趋势", r_activity_score:"R 活跃度趋势"}};
 const categoryNames = {{all:"全部", study:"学习", tool:"工具", social:"社交", entertainment:"娱乐", game:"游戏", other:"其他"}};
 const metricMeta = {{
-  learning_input_score:[["含义","学习类 App 与产出痕迹的综合投入"],["适合观察","今天有没有真的把时间投到学习对象上"],["风险","只看投入不代表掌握程度"]],
-  learning_output_score:[["含义","Windows 文件和 R 命令形成的产出信号"],["适合观察","是否留下可复查的作业、脚本或笔记"],["风险","未保存文件会被低估"]],
+  learning_input_score:[["含义","学习 App 时长、工具使用、R 活动和 Windows 学习记录共同形成的学习情况"],["适合观察","今天是否把主要行为投入到学习对象上"],["风险","只代表过程强度，不直接等同掌握程度"]],
+  learning_output_score:[["含义","Windows 文件和 R 命令形成的学习记录信号"],["适合观察","R 语言、统计作业等学习过程是否留下可复查的脚本、笔记或文件"],["风险","这不是最终结果或掌握程度指标，未保存文件会被低估"]],
   distraction_risk_score:[["含义","娱乐、社交、游戏相对总使用的压力"],["适合观察","学习前后是否被高刺激应用吞掉"],["风险","必要社交可能被误判"]],
   r_activity_score:[["含义","RStudio/R 相关操作的活跃程度"],["适合观察","统计作业是否进入实际代码阶段"],["风险","只看命令数量不看代码质量"]],
 }};
 const metricFormulas = [
-  ["手机总使用", "今日所有前台 App 使用时长求和", "phone_total_minutes = Σ app.foreground_minutes"],
-  ["学习 App", "被分类为 study 的 App 使用时长", "study_app_minutes = Σ foreground_minutes where category = study"],
+  ["手机总使用", "今日所有 App 使用时长求和；番茄 ToDo 使用截图识别后的专注时长修正", "phone_total_minutes = Σ corrected_app.foreground_minutes"],
+  ["学习 App", "被分类为 study 的 App 使用时长；番茄 ToDo 已作为普通学习 App 计入", "study_app_minutes = Σ corrected_app.foreground_minutes where category = study"],
+  ["番茄 ToDo 修正", "系统未能正确读取番茄 ToDo 后台专注过程时，用截图识别结果覆盖该 App 时长", "tomato_todo.foreground_minutes = focus_minutes"],
   ["分心 App", "娱乐、游戏、社交类 App 使用时长合计", "distracting_app_minutes = entertainment + game + social"],
   ["分心占比", "分心 App 时长占手机总使用时长比例", "distracting_ratio = distracting_app_minutes / phone_total_minutes"],
-  ["学习投入分", "学习 App、工具 App、产出痕迹的综合分，最高 100", "learning_input_score = weighted(study_app, tool_app, output_signal)"],
-  ["学习产出分", "学习文件修改、新建、R 命令形成的产出信号，最高 100", "learning_output_score = min(100, file_signal + r_signal)"],
+  ["学习情况分", "学习 App 统计为主，Windows 学习记录作为 R/作业过程的辅助信号，最高 100", "learning_input_score = min(100, study_app_minutes*0.22 + tool_app_minutes*0.08 + r_command_count*0.25 + learning_output_score*0.25)"],
+  ["Windows 学习记录分", "Windows 学习文件修改、新建、R 命令形成的过程记录信号，最高 100", "learning_output_score = min(100, file_signal + r_signal)"],
   ["分心风险分", "分心占比和高频切换共同推高风险，最高 100", "distraction_risk_score = min(100, distracting_ratio * 100 + switch_penalty)"],
   ["R 活跃度", "R 命令、可视化、建模操作的活跃程度", "r_activity_score = weighted(command_count, visualization_count, modeling_count)"]
 ];
@@ -676,8 +691,8 @@ function renderKpis() {{
   const l = latest();
   const items = [
     ["手机总使用", mins(l.phone_total_minutes), "今日数字行为总量"],
-    ["学习 App", mins(l.study_app_minutes), "学习类应用使用"],
-    ["学习产出", Number(l.learning_output_score).toFixed(1), "文件 + R 痕迹"],
+    ["学习 App", mins(l.study_app_minutes), `含番茄 ToDo ${{mins(l.focus_minutes || 0)}}`],
+    ["Windows 学习", Number(l.learning_output_score).toFixed(1), "文件 + R 记录"],
     ["分心风险", Number(l.distraction_risk_score).toFixed(1), `分心占比 ${{pct(l.distracting_ratio)}}`],
   ];
   document.getElementById("kpis").innerHTML = items.map(x => `<div class="card"><div class="label">${{x[0]}}</div><div class="value">${{x[1]}}</div><div class="delta">${{x[2]}}</div></div>`).join("");
@@ -731,10 +746,10 @@ function renderPeriodPlan() {{
   const weeklyReady = dataDays >= 7 && !Number(w.is_partial_week || 0);
   const monthlyReady = Number(m.data_days_count || 0) >= 21;
   const items = [
-    ["周报状态", weeklyReady ? "可正式输出" : "早期趋势", weeklyReady ? `本周 ${{w.week_start}} 至 ${{w.week_end}} 数据完整。` : `当前周数据 ${{w.data_days_count || dataDays}} 天，不足完整周时用模拟/历史样例辅助展示。`, `周均学习投入=${{Number(w.avg_learning_input_score || 0).toFixed(1)}}，周均分心风险=${{Number(w.avg_distraction_risk_score || 0).toFixed(1)}}`],
-    ["月报状态", monthlyReady ? "可正式输出" : "设计先行", monthlyReady ? `本月已有 ${{m.data_days_count}} 天数据，可做稳定月报。` : `当前月度样本 ${{m.data_days_count || dataDays}} 天，适合先展示结构与趋势解释。`, `月均学习产出=${{Number(m.avg_learning_output_score || 0).toFixed(1)}}，风险日=${{m.risk_day || "待积累"}}`],
-    ["周报应回答的问题", "产品设计", "这一周学习是否连续？分心风险是否集中在某几天？R/文件产出是否跟上？", "输出：最佳日、风险日、连续性、下周最小行动"],
-    ["月报应回答的问题", "产品设计", "这个月是否形成稳定学习节奏？分心是否周期性反弹？产出是否可复查？", "输出：趋势拐点、稳定性、长期风险、下月策略"]
+    ["周报状态", weeklyReady ? "可正式输出" : "早期趋势", weeklyReady ? `本周 ${{w.week_start}} 至 ${{w.week_end}} 数据完整。` : `当前周数据 ${{w.data_days_count || dataDays}} 天，不足完整周时用模拟/历史样例辅助展示。`, `周均学习情况=${{Number(w.avg_learning_input_score || 0).toFixed(1)}}，周均分心风险=${{Number(w.avg_distraction_risk_score || 0).toFixed(1)}}`],
+    ["月报状态", monthlyReady ? "可正式输出" : "设计先行", monthlyReady ? `本月已有 ${{m.data_days_count}} 天数据，可做稳定月报。` : `当前月度样本 ${{m.data_days_count || dataDays}} 天，适合先展示结构与趋势解释。`, `月均 Windows 学习记录=${{Number(m.avg_learning_output_score || 0).toFixed(1)}}，风险日=${{m.risk_day || "待积累"}}`],
+    ["周报应回答的问题", "产品设计", "这一周学习是否连续？分心风险是否集中在某几天？Windows/R 学习记录是否跟上？", "输出：最佳日、风险日、连续性、下周最小行动"],
+    ["月报应回答的问题", "产品设计", "这个月是否形成稳定学习节奏？分心是否周期性反弹？Windows 学习记录是否可复查？", "输出：趋势拐点、稳定性、长期风险、下月策略"]
   ];
   document.getElementById("periodPlan").innerHTML = items.map(item => `<div class="period-item"><strong>${{esc(item[0])}} · ${{esc(item[1])}}</strong><div>${{esc(item[2])}}</div><div class="formula">${{esc(item[3])}}</div></div>`).join("");
 }}
@@ -812,23 +827,30 @@ function renderAppTrend(app) {{
 
 function renderAppDetail(app) {{
   if (!app) {{ document.getElementById("appDetail").innerHTML = `<div class="insight">当前分类下没有 App 记录。</div>`; return; }}
-  const share = Math.min(100, Number(app.foreground_minutes || 0) / Math.max(Number(latest().phone_total_minutes || 1), 1) * 100);
-  document.getElementById("appDetail").innerHTML = `<span class="pill" style="color:${{colors[app.category]||colors.other}}">${{categoryNames[app.category] || app.category || "其他"}}</span><div class="detail-title">${{esc(appDisplayName(app))}}</div><div class="label">${{esc(app.package_name || "")}}</div><div class="detail-grid"><div><small>使用时长</small><strong>${{mins(app.foreground_minutes)}}</strong></div><div><small>打开次数</small><strong>${{app.open_count || 0}}</strong></div><div><small>占手机总时长</small><strong>${{share.toFixed(1)}}%</strong></div><div><small>最近使用</small><strong>${{esc(app.last_used_at || "未知")}}</strong></div></div><div class="insight" style="margin-top:12px">这个详情用于说明自动抓取后如何解释单个软件行为。分类仍可人工修正，分析只基于聚合痕迹。</div>`;
+  const denominator = Math.max(Number(latest().phone_total_minutes || 1), 1);
+  const share = Math.min(100, Number(app.foreground_minutes || 0) / denominator * 100);
+  const shareLabel = "占手机总时长";
+  const insight = app.package_name === "com.plan.kot32.tomatotime" ? "番茄 ToDo 的系统前台时长无法反映真实专注过程，已用截图识别的专注时长修正为普通学习 App 使用时长。" : "这个详情用于说明自动抓取后如何解释单个软件行为。分类仍可人工修正，分析只基于聚合痕迹。";
+  document.getElementById("appDetail").innerHTML = `<span class="pill" style="color:${{colors[app.category]||colors.other}}">${{categoryNames[app.category] || app.category || "其他"}}</span><div class="detail-title">${{esc(appDisplayName(app))}}</div><div class="label">${{esc(app.package_name || "")}}</div><div class="detail-grid"><div><small>使用时长</small><strong>${{mins(app.foreground_minutes)}}</strong></div><div><small>打开次数</small><strong>${{app.open_count || 0}}</strong></div><div><small>${{shareLabel}}</small><strong>${{share.toFixed(1)}}%</strong></div><div><small>最近使用</small><strong>${{esc(app.last_used_at || "未知")}}</strong></div></div><div class="insight" style="margin-top:12px">${{esc(insight)}}</div>`;
   renderAppHourly(app);
   renderAppTrend(app);
 }}
 
 function renderOutputTrend() {{
   const rows = (payload.output_trends || payload.daily || []).map(d => ({{label:d.date.slice(5), value:Number(d.learning_output_score || 0)}}));
-  drawLineChart("outputTrendChart", rows, {{unit:"", yLabel:"output score", max:100}});
+  drawLineChart("outputTrendChart", rows, {{unit:"", yLabel:"windows study score", max:100}});
   const latestRow = rows.at(-1) || {{value:0}};
   const trendRows = payload.output_trends || [];
   const latestTrend = trendRows.at(-1) || {{}};
-  document.getElementById("outputTrendMeta").innerHTML = `<div class="meter-chip"><small>latest score</small><strong>${{Number(latestRow.value || 0).toFixed(1)}}</strong></div><div class="meter-chip"><small>file total</small><strong>${{latestTrend.total_study_files_count ?? latest().total_study_files_count ?? 0}}</strong></div><div class="meter-chip"><small>R commands</small><strong>${{latestTrend.r_command_count ?? latest().r_command_count ?? 0}}</strong></div>`;
+  document.getElementById("outputTrendMeta").innerHTML = `<div class="meter-chip"><small>latest score</small><strong>${{Number(latestRow.value || 0).toFixed(1)}}</strong></div><div class="meter-chip"><small>focus</small><strong>${{mins(latestTrend.focus_minutes ?? latest().focus_minutes ?? 0)}}</strong></div><div class="meter-chip"><small>file records</small><strong>${{latestTrend.total_study_files_count ?? latest().total_study_files_count ?? 0}}</strong></div><div class="meter-chip"><small>R commands</small><strong>${{latestTrend.r_command_count ?? latest().r_command_count ?? 0}}</strong></div>`;
 }}
 
 function renderOutput() {{
   document.getElementById("fileTable").innerHTML = payload.files.map(f => `<tr><td>${{esc(f.extension)}}</td><td>${{esc(f.activity_type)}}</td><td>${{f.count}}</td></tr>`).join("");
+  const focusHtml = (payload.focus_sessions || []).length
+    ? `<h2>番茄 ToDo 学习会话</h2><div class="table-wrap"><table><thead><tr><th>任务</th><th>时间</th><th>时长</th><th>来源</th></tr></thead><tbody>${{payload.focus_sessions.map(s => `<tr><td>${{esc(s.title)}}</td><td>${{esc((s.start_time || "") + (s.end_time ? " - " + s.end_time : ""))}}</td><td>${{mins(s.minutes)}}</td><td>${{esc(s.source || "manual")}}</td></tr>`).join("")}}</tbody></table></div>`
+    : `<h2>番茄 ToDo 学习会话</h2><p class="muted">尚未导入 focus_*.json；当前学习情况主要来自 App 与文件/R 信号。</p>`;
+  document.getElementById("focusSessions").innerHTML = focusHtml;
   const total = payload.files.reduce((sum,f)=>sum+Number(f.count||0),0);
   document.getElementById("evidenceHeat").innerHTML = Array.from({{length:24}}, (_,i) => `<span class="${{i < Math.min(24,total) ? "hot" : ""}}" title="文件信号 ${{i+1}}"></span>`).join("");
   const r = payload.r_summary || {{}};

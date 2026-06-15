@@ -10,7 +10,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from studypulse_config import expand_config_path, load_config
+from studypulse_config import expand_config_path, focus_export_dir, load_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -23,6 +23,7 @@ WINDOWS_FILE_CSV_PATH = PROJECT_ROOT / "sample_data" / "windows_file_activity_20
 WINDOWS_SCAN_DIR = PROJECT_ROOT / "data" / "scans"
 R_HISTORY_PATH = PROJECT_ROOT / "sample_data" / "r_history_sample.Rhistory"
 DAILY_SAMPLE_PATH = PROJECT_ROOT / "sample_data" / "daily_metrics_sample.csv"
+TOMATO_TODO_PACKAGE = "com.plan.kot32.tomatotime"
 
 
 R_FUNCTION_RE = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z.][A-Za-z0-9_.]*)\s*\(")
@@ -81,6 +82,7 @@ APP_NAME_MAP.update(
         "com.google.android.googlequicksearchbox": "Google 搜索",
     }
 )
+APP_NAME_MAP["com.plan.kot32.tomatotime"] = "番茄 ToDo"
 
 SYSTEM_PACKAGE_PREFIXES = (
     "android",
@@ -133,6 +135,8 @@ def ensure_daily_metrics_columns(conn: sqlite3.Connection) -> None:
     additions = {
         "total_study_files_count": "INTEGER NOT NULL DEFAULT 0",
         "study_files_modified_7d_count": "INTEGER NOT NULL DEFAULT 0",
+        "focus_minutes": "REAL NOT NULL DEFAULT 0",
+        "focus_session_count": "INTEGER NOT NULL DEFAULT 0",
     }
     for column, ddl in additions.items():
         if column not in columns:
@@ -168,6 +172,7 @@ def reset_tables(conn: sqlite3.Connection) -> None:
         "data_quality_report",
         "daily_metrics",
         "r_history_summary",
+        "focus_sessions",
         "windows_file_activity",
         "android_app_hourly_usage",
         "android_app_usage",
@@ -577,6 +582,185 @@ def import_windows_file_activity(conn: sqlite3.Connection) -> None:
         raise
 
 
+def normalize_focus_session(date: str, source: str, item: dict) -> dict:
+    title = str(item.get("title") or item.get("task") or item.get("name") or "未命名专注").strip()
+    minutes = item.get("minutes", item.get("duration_minutes", 0))
+    try:
+        minutes_value = float(minutes)
+    except (TypeError, ValueError):
+        minutes_value = 0.0
+    return {
+        "date": str(item.get("date") or date),
+        "source": str(item.get("source") or source or "manual"),
+        "title": title,
+        "start_time": str(item.get("start") or item.get("start_time") or ""),
+        "end_time": str(item.get("end") or item.get("end_time") or ""),
+        "minutes": max(0.0, minutes_value),
+        "raw_json": json.dumps(item, ensure_ascii=False, sort_keys=True),
+    }
+
+
+def get_focus_export_paths() -> list[Path]:
+    config = load_config()
+    folder = focus_export_dir(config)
+    if not folder.exists():
+        return []
+    patterns = ("focus_*.json", "tomato_*.json", "pomodoro_*.json")
+    paths: list[Path] = []
+    for pattern in patterns:
+        paths.extend(folder.glob(pattern))
+    return sorted(set(paths), key=lambda path: (path.stat().st_mtime, path.name))
+
+
+def import_focus_sessions(conn: sqlite3.Connection) -> list[str]:
+    imported_dates: set[str] = set()
+    for path in get_focus_export_paths():
+        import_id = create_import_log(conn, "focus_sessions", path.name)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            date_value = str(data.get("date") or "")
+            source = str(data.get("source") or "manual")
+            sessions = data.get("sessions", [])
+            if not date_value:
+                raise ValueError("focus export requires top-level date")
+            if not isinstance(sessions, list):
+                raise ValueError("focus export requires sessions list")
+            rows = [normalize_focus_session(date_value, source, item) for item in sessions if isinstance(item, dict)]
+            for row in rows:
+                conn.execute(
+                    """
+                    INSERT INTO focus_sessions (
+                        date, source, title, start_time, end_time, minutes, raw_json, import_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["date"],
+                        row["source"],
+                        row["title"],
+                        row["start_time"],
+                        row["end_time"],
+                        row["minutes"],
+                        row["raw_json"],
+                        import_id,
+                    ),
+                )
+                imported_dates.add(row["date"])
+            conn.commit()
+            finish_import_log(conn, import_id, "success", f"imported {len(rows)} focus sessions")
+        except Exception as exc:
+            finish_import_log(conn, import_id, "failed", str(exc))
+            raise
+    return sorted(imported_dates)
+
+
+def split_focus_session_by_hour(date_value: str, start_time: str, end_time: str, minutes: float) -> list[tuple[int, float]]:
+    if minutes <= 0:
+        return []
+    try:
+        start = datetime.strptime(f"{date_value} {start_time}", "%Y-%m-%d %H:%M")
+        end = datetime.strptime(f"{date_value} {end_time}", "%Y-%m-%d %H:%M") if end_time else start + timedelta(minutes=minutes)
+        if end <= start:
+            end = start + timedelta(minutes=minutes)
+    except ValueError:
+        hour = int(start_time.split(":", 1)[0]) if ":" in start_time and start_time.split(":", 1)[0].isdigit() else 0
+        return [(max(0, min(23, hour)), minutes)]
+
+    rows: list[tuple[int, float]] = []
+    cursor = start
+    while cursor < end:
+        hour_end = cursor.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        segment_end = min(hour_end, end)
+        rows.append((cursor.hour, (segment_end - cursor).total_seconds() / 60))
+        cursor = segment_end
+    return rows
+
+
+def apply_focus_sessions_to_tomato_app(conn: sqlite3.Connection) -> None:
+    """Use Tomato ToDo focus sessions as the corrected normal app usage signal."""
+    dates = [
+        row["date"]
+        for row in conn.execute("SELECT DISTINCT date FROM focus_sessions ORDER BY date").fetchall()
+    ]
+    for date_value in dates:
+        sessions = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT title, start_time, end_time, minutes
+                FROM focus_sessions
+                WHERE date = ?
+                ORDER BY COALESCE(start_time, ''), id
+                """,
+                (date_value,),
+            ).fetchall()
+        ]
+        focus_minutes = sum(float(row["minutes"] or 0) for row in sessions)
+        if focus_minutes <= 0:
+            continue
+        focus_count = len(sessions)
+        last_time = max(
+            [str(row.get("end_time") or row.get("start_time") or "") for row in sessions if row.get("end_time") or row.get("start_time")],
+            default="",
+        )
+        last_used_at = f"{date_value} {last_time}:00" if last_time else date_value
+
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM android_app_usage
+            WHERE date = ? AND package_name = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (date_value, TOMATO_TODO_PACKAGE),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE android_app_usage
+                SET app_label = ?, category = ?, foreground_minutes = ?, open_count = ?, last_used_at = ?
+                WHERE id = ?
+                """,
+                ("番茄 ToDo", "study", focus_minutes, focus_count, last_used_at, existing["id"]),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO android_app_usage (
+                    date, package_name, app_label, category, foreground_minutes, open_count, last_used_at, import_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (date_value, TOMATO_TODO_PACKAGE, "番茄 ToDo", "study", focus_minutes, focus_count, last_used_at),
+            )
+
+        conn.execute(
+            "DELETE FROM android_app_hourly_usage WHERE date = ? AND package_name = ?",
+            (date_value, TOMATO_TODO_PACKAGE),
+        )
+        hourly: dict[int, float] = {}
+        for session in sessions:
+            for hour, value in split_focus_session_by_hour(
+                date_value,
+                str(session.get("start_time") or ""),
+                str(session.get("end_time") or ""),
+                float(session.get("minutes") or 0),
+            ):
+                hourly[hour] = hourly.get(hour, 0.0) + value
+        for hour, minutes in sorted(hourly.items()):
+            conn.execute(
+                """
+                INSERT INTO android_app_hourly_usage (
+                    date, package_name, app_label, category, hour, foreground_minutes, import_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (date_value, TOMATO_TODO_PACKAGE, "番茄 ToDo", "study", hour, minutes),
+            )
+    conn.commit()
+
+
 def classify_r_command(line: str) -> tuple[str, list[str]]:
     functions = R_FUNCTION_RE.findall(line)
     for category, names in COMMAND_RULES.items():
@@ -774,8 +958,17 @@ def generate_daily_metrics(conn: sqlite3.Connection, date: str) -> None:
     r_command_count = int(r_summary["command_count"] if r_summary else 0)
     r_visualization_count = int(r_summary["visualization_count"] if r_summary else 0)
     r_modeling_count = int(r_summary["modeling_count"] if r_summary else 0)
+    focus_row = conn.execute(
+        """
+        SELECT SUM(minutes) AS focus_minutes, COUNT(*) AS focus_session_count
+        FROM focus_sessions
+        WHERE date = ?
+        """,
+        (date,),
+    ).fetchone()
+    focus_minutes = float(focus_row["focus_minutes"] or 0)
+    focus_session_count = int(focus_row["focus_session_count"] or 0)
 
-    learning_input_score = min(100.0, study * 0.6 + tool * 0.3 + r_command_count * 0.5)
     learning_output_score = min(
         100.0,
         modified_count * 12
@@ -784,13 +977,20 @@ def generate_daily_metrics(conn: sqlite3.Connection, date: str) -> None:
         + min(total_file_count, 30) * 0.5
         + r_command_count * 0.6,
     )
+    learning_input_score = min(
+        100.0,
+        study * 0.22
+        + tool * 0.08
+        + r_command_count * 0.25
+        + learning_output_score * 0.25,
+    )
     distraction_risk_score = min(100.0, distracting_ratio * 100 + app_open_count * 0.2)
     r_activity_score = min(100.0, r_command_count * 1.2 + r_visualization_count * 2 + r_modeling_count * 3)
 
     conn.execute(
         """
         INSERT OR REPLACE INTO daily_metrics (
-            date, phone_total_minutes, study_app_minutes, tool_app_minutes,
+            date, phone_total_minutes, study_app_minutes, focus_minutes, focus_session_count, tool_app_minutes,
             social_app_minutes, entertainment_app_minutes, game_app_minutes,
             distracting_app_minutes, distracting_ratio, app_open_count,
             total_study_files_count, study_files_modified_7d_count,
@@ -799,12 +999,14 @@ def generate_daily_metrics(conn: sqlite3.Connection, date: str) -> None:
             learning_input_score, learning_output_score, distraction_risk_score,
             r_activity_score, generated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             date,
             phone_total,
             study,
+            focus_minutes,
+            focus_session_count,
             tool,
             social,
             entertainment,
@@ -994,6 +1196,8 @@ def seed_ai_review(conn: sqlite3.Connection, date: str) -> None:
         "date": row["date"],
         "phone_total_minutes": row["phone_total_minutes"],
         "study_app_minutes": row["study_app_minutes"],
+        "focus_minutes": row["focus_minutes"],
+        "focus_session_count": row["focus_session_count"],
         "distracting_app_minutes": row["distracting_app_minutes"],
         "distracting_ratio": row["distracting_ratio"],
         "study_files_modified_count": row["study_files_modified_count"],
@@ -1030,6 +1234,8 @@ def main() -> None:
     import_app_rules(conn)
     imported_dates = [import_android_json(conn, path) for path in get_android_json_paths()]
     import_windows_file_activity(conn)
+    focus_dates = import_focus_sessions(conn)
+    apply_focus_sessions_to_tomato_app(conn)
     target_date = sorted(imported_dates)[-1]
     parse_r_sources(conn, target_date)
     import_sample_daily_history(conn)
@@ -1044,6 +1250,7 @@ def main() -> None:
             "app_category_rule",
             "android_app_usage",
             "windows_file_activity",
+            "focus_sessions",
             "r_history_summary",
             "daily_metrics",
             "weekly_metrics",

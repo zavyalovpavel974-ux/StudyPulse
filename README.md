@@ -44,6 +44,9 @@ config\studypulse.local.json
 Edit that local file and set:
 
 - `android.export_inbox_dir`: folder where Android JSON exports are collected
+- `focus.export_dir`: folder where Tomato ToDo/focus-session JSON files are collected
+- `focus.screenshot_inbox_dir`: folder where Tomato ToDo screenshots are collected
+- `focus.vision_model`: optional vision-capable OpenAI-compatible model used to turn screenshots into focus JSON
 - `study_roots`: folders that contain study files
 - `email.recipients`: report recipients
 - `features.enable_adb_sync`: whether to try ADB sync
@@ -80,19 +83,25 @@ For a new user, use this order:
 
 6. Export a JSON file from Android, either manually or by ADB sync.
 
-7. Run with real data but no email:
+7. Optional: import focus-session data from Tomato ToDo/manual JSON:
+
+   ```powershell
+   python scripts\import_focus_export.py sample_data\focus_2026-06-14.json
+   ```
+
+8. Run with real data but no email:
 
    ```powershell
    python scripts\run_pipeline.py --skip-email
    ```
 
-8. Configure SMTP and test email:
+9. Configure SMTP and test email:
 
    ```powershell
    python scripts\send_report_email.py --dry-run
    ```
 
-9. Run the full pipeline:
+10. Run the full pipeline:
 
    ```powershell
    python scripts\run_pipeline.py
@@ -160,6 +169,57 @@ When the report looks correct and SMTP is configured:
 ```powershell
 python scripts\run_pipeline.py
 ```
+
+## Focus Session JSON
+
+Android app usage cannot reliably read another app's private study records. StudyPulse treats Tomato ToDo focus sessions as a correction source: after import, the pipeline rewrites Tomato ToDo as a normal `study` app row and folds the corrected minutes into both `phone_total_minutes` and `study_app_minutes`.
+
+If you can only export screenshots, put the Tomato ToDo daily screenshot into:
+
+```text
+%USERPROFILE%\Desktop\focus_screenshots
+```
+
+Then run:
+
+```powershell
+python scripts\import_focus_screenshot.py --latest
+```
+
+This requires a vision-capable OpenAI-compatible model. By default the script reuses the `mimo` API settings and `MIMO_API_KEY`; set `focus.vision_model` in `config\studypulse.local.json` if the text model is not image-capable.
+
+The daily pipeline also runs this step automatically in optional mode:
+
+```powershell
+python scripts\run_pipeline.py
+```
+
+If no screenshot exists or the vision API does not support images, the pipeline continues with existing Android/Windows/R data.
+
+If Tomato ToDo cannot export machine-readable data, create or OCR a daily JSON file with this shape:
+
+```json
+{
+  "source": "tomato_todo_manual",
+  "date": "2026-06-14",
+  "sessions": [
+    {
+      "title": "数学统计做题",
+      "start": "12:14",
+      "end": "13:07",
+      "minutes": 53
+    }
+  ]
+}
+```
+
+Import it with:
+
+```powershell
+python scripts\import_focus_export.py path\to\focus_2026-06-14.json
+```
+
+The file is copied into `focus.export_dir`. The next pipeline run imports it into `focus_sessions`, uses it to correct Tomato ToDo as a normal `study` app, updates `phone_total_minutes` and `study_app_minutes`, and renders the sessions in the product page.
 
 ## Android JSON Sync
 

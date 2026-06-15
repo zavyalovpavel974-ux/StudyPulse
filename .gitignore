@@ -4,6 +4,8 @@ config/studypulse_config.json
 data/*.db
 data/*.json
 data/android_exports/*.json
+data/focus_exports/*.json
+data/focus_screenshots/*
 data/scans/*.csv
 logs/*.log
 reports/*.html
@@ -13,6 +15,6 @@ scripts/__pycache__/
 android_app/app/build/
 android_app/.gradle/
 android_app/local.properties
+android_app/.idea/
 tmp_app_slices/
 android_usage*.json
-!sample_data/android_usage*.json

@@ -109,10 +109,28 @@ CREATE TABLE IF NOT EXISTS r_history_summary (
 CREATE INDEX IF NOT EXISTS idx_r_history_summary_date
 ON r_history_summary(date);
 
+CREATE TABLE IF NOT EXISTS focus_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'manual',
+    title TEXT NOT NULL,
+    start_time TEXT,
+    end_time TEXT,
+    minutes REAL NOT NULL DEFAULT 0,
+    raw_json TEXT NOT NULL DEFAULT '{}',
+    import_id INTEGER,
+    FOREIGN KEY (import_id) REFERENCES import_log(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_focus_sessions_date
+ON focus_sessions(date);
+
 CREATE TABLE IF NOT EXISTS daily_metrics (
     date TEXT PRIMARY KEY,
     phone_total_minutes REAL NOT NULL DEFAULT 0,
     study_app_minutes REAL NOT NULL DEFAULT 0,
+    focus_minutes REAL NOT NULL DEFAULT 0,
+    focus_session_count INTEGER NOT NULL DEFAULT 0,
     tool_app_minutes REAL NOT NULL DEFAULT 0,
     social_app_minutes REAL NOT NULL DEFAULT 0,
     entertainment_app_minutes REAL NOT NULL DEFAULT 0,

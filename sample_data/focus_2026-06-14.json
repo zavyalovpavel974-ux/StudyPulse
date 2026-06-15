@@ -1,0 +1,26 @@
+{
+  "source": "tomato_todo_manual",
+  "date": "2026-06-14",
+  "total_focus_minutes": 277,
+  "focus_count": 3,
+  "sessions": [
+    {
+      "title": "数学统计做题",
+      "start": "12:14",
+      "end": "13:07",
+      "minutes": 53
+    },
+    {
+      "title": "学习实变",
+      "start": "16:36",
+      "end": "19:56",
+      "minutes": 200
+    },
+    {
+      "title": "学习实变",
+      "start": "21:42",
+      "end": "22:06",
+      "minutes": 24
+    }
+  ]
+}

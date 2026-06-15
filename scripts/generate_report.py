@@ -7,6 +7,18 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+def raw_float(row: dict[str, Any] | None, key: str) -> float:
+    if not row:
+        return 0.0
+    try:
+        return float(row.get(key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def raw_int(row: dict[str, Any] | None, key: str) -> int:
+    return int(raw_float(row, key))
+
 
 def find_project_root() -> Path:
     candidates = [Path.cwd(), Path.cwd().parent]
@@ -291,6 +303,8 @@ def ai_prompt_from_latest(latest: dict[str, Any]) -> str:
         "date": latest["date"],
         "phone_total_minutes": as_float(latest, "phone_total_minutes"),
         "study_app_minutes": as_float(latest, "study_app_minutes"),
+        "focus_minutes": as_float(latest, "focus_minutes"),
+        "focus_session_count": as_int(latest, "focus_session_count"),
         "tool_app_minutes": as_float(latest, "tool_app_minutes"),
         "distracting_app_minutes": as_float(latest, "distracting_app_minutes"),
         "distracting_ratio": as_float(latest, "distracting_ratio"),
@@ -433,8 +447,8 @@ def build_report(context: dict[str, Any], output_path: Path) -> None:
 
       <section class="grid-4">
         <div class="panel"><div class="kpi-label">手机总使用</div><div class="kpi-value">{minutes_label(phone_total)}</div><div class="kpi-foot">{h(delta_text(daily, "phone_total_minutes"))}</div></div>
-        <div class="panel"><div class="kpi-label">学习类 App</div><div class="kpi-value">{minutes_label(study_minutes)}</div><div class="kpi-foot">{h(delta_text(daily, "study_app_minutes"))}</div></div>
-        <div class="panel"><div class="kpi-label">学习产出指数</div><div class="kpi-value">{score(output_score)}</div><div class="kpi-foot">{h(delta_text(daily, "learning_output_score"))}</div></div>
+        <div class="panel"><div class="kpi-label">学习 App</div><div class="kpi-value">{minutes_label(study_minutes)}</div><div class="kpi-foot">含番茄 ToDo 修正时长</div></div>
+        <div class="panel"><div class="kpi-label">Windows 学习记录指数</div><div class="kpi-value">{score(output_score)}</div><div class="kpi-foot">{h(delta_text(daily, "learning_output_score"))}</div></div>
         <div class="panel"><div class="kpi-label">学习文件</div><div class="kpi-value">{total_files}</div><div class="kpi-foot">近 7 天 {recent_files}，今日 {today_files}</div></div>
       </section>
 
@@ -450,11 +464,11 @@ def build_report(context: dict[str, Any], output_path: Path) -> None:
           <h2>本周摘要</h2>
           <div class="summary-list">
             <div><span>周期</span><strong>{h(weekly.get("week_start", "-"))} 至 {h(weekly.get("week_end", "-"))}</strong></div>
-            <div><span>学习 App 总时长</span><strong>{minutes_label(float(weekly.get("total_study_app_minutes", 0) or 0))}</strong></div>
+            <div><span>学习总时长</span><strong>{minutes_label(float(weekly.get("total_study_app_minutes", 0) or 0))}</strong></div>
             <div><span>分心 App 总时长</span><strong>{minutes_label(float(weekly.get("total_distracting_app_minutes", 0) or 0))}</strong></div>
             <div><span>R 命令总数</span><strong>{int(float(weekly.get("total_r_commands", 0) or 0))}</strong></div>
             <div><span>分心风险指数</span><strong>{score(risk)} / {pct(distracting_ratio)}</strong></div>
-            <div><span>产出较高日</span><strong>{h(weekly.get("best_day", "-"))}</strong></div>
+            <div><span>Windows 学习记录较高日</span><strong>{h(weekly.get("best_day", "-"))}</strong></div>
             <div><span>风险较高日</span><strong>{h(weekly.get("risk_day", "-"))}</strong></div>
           </div>
         </div>
@@ -462,7 +476,7 @@ def build_report(context: dict[str, Any], output_path: Path) -> None:
 
       <section class="grid-2" id="trend">
         <div class="panel">
-          <h2>学习投入趋势</h2>
+          <h2>学习情况趋势</h2>
           {line_svg(labels, input_scores, "#2563eb")}
         </div>
         <div class="panel">
@@ -473,7 +487,7 @@ def build_report(context: dict[str, Any], output_path: Path) -> None:
 
       <section class="grid-2">
         <div class="panel">
-          <h2>学习产出趋势</h2>
+          <h2>Windows 学习记录趋势</h2>
           {line_svg(labels, output_scores, "#16a34a")}
         </div>
         <div class="panel">

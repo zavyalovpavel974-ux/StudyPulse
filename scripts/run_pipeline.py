@@ -201,13 +201,19 @@ def main(argv: list[str]) -> None:
         mark_step(status, "import_android_json", "warning", "未找到新的 android_usage*.json，沿用已有数据库数据")
 
     steps = [
+        (
+            "import_focus_screenshot",
+            "Progress: import latest Tomato ToDo screenshot if configured",
+            [PYTHON, str(PROJECT_ROOT / "scripts" / "import_focus_screenshot.py"), "--latest", "--optional"],
+            False,
+        ),
         ("scan_windows_files", "Progress: scan Windows study folders", [PYTHON, str(PROJECT_ROOT / "scripts" / "scan_windows_files.py")], True),
         ("build_database", "Progress: build SQLite database", [PYTHON, str(PROJECT_ROOT / "scripts" / "build_database.py")], True),
         ("generate_report", "Progress: generate HTML report", [PYTHON, str(PROJECT_ROOT / "scripts" / "generate_report.py")], True),
         ("generate_interactive_ui", "Progress: generate interactive product UI", [PYTHON, str(PROJECT_ROOT / "scripts" / "generate_interactive_ui.py")], True),
     ]
     if features.get("enable_ai_review", True):
-        steps.insert(2, ("generate_ai_review", "Progress: generate MiMo AI review", [PYTHON, str(PROJECT_ROOT / "scripts" / "generate_ai_review.py")], True))
+        steps.insert(3, ("generate_ai_review", "Progress: generate MiMo AI review", [PYTHON, str(PROJECT_ROOT / "scripts" / "generate_ai_review.py")], True))
     else:
         mark_step(status, "generate_ai_review", "skipped", "配置已关闭 AI 复盘")
 

@@ -4,6 +4,11 @@
     "adb_package_name": "com.studypulse.android",
     "adb_remote_dir": "/sdcard/Android/data/com.studypulse.android/files/exports"
   },
+  "focus": {
+    "export_dir": "data\\focus_exports",
+    "screenshot_inbox_dir": "%USERPROFILE%\\Desktop\\focus_screenshots",
+    "vision_model": ""
+  },
   "study_roots": [
     {
       "alias": "my-study-folder",

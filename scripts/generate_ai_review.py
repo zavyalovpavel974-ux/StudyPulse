@@ -35,6 +35,8 @@ def latest_metrics(conn: sqlite3.Connection) -> dict:
         "date",
         "phone_total_minutes",
         "study_app_minutes",
+        "focus_minutes",
+        "focus_session_count",
         "tool_app_minutes",
         "social_app_minutes",
         "entertainment_app_minutes",
@@ -65,7 +67,7 @@ def latest_context(conn: sqlite3.Connection) -> dict:
         dict(row)
         for row in conn.execute(
             """
-            SELECT date, phone_total_minutes, study_app_minutes, distracting_app_minutes,
+            SELECT date, phone_total_minutes, study_app_minutes, focus_minutes, focus_session_count, distracting_app_minutes,
                    distracting_ratio, study_files_modified_count, r_command_count,
                    learning_output_score, distraction_risk_score
             FROM daily_metrics
@@ -107,6 +109,12 @@ def latest_context(conn: sqlite3.Connection) -> dict:
     ).fetchone()
 
     return {
+        "metric_semantics": {
+            "study_app_minutes": "已包含番茄 ToDo 截图识别修正后的普通学习 App 时长",
+            "focus_minutes": "番茄 ToDo 修正来源说明，不应与 study_app_minutes 重复相加",
+            "learning_output_score": "Windows 文件和 R 命令形成的学习记录指标，不代表最终结果或掌握程度",
+            "learning_input_score": "学习 App 统计为主，Windows 学习记录作为辅助贡献的整日学习情况指标",
+        },
         "latest_metrics": metrics,
         "recent_daily_metrics": list(reversed(recent_daily)),
         "weekly_metrics": dict(weekly) if weekly else {},
@@ -121,6 +129,9 @@ def build_prompt(context: dict) -> str:
         "你是 StudyPulse 的学习行为复盘助手。请基于下面的聚合指标生成中文日报复盘。\n\n"
         "要求：只做趋势分析，不做道德评判；使用“可能、估计、建议”等谨慎表达；"
         "不要声称能看到屏幕内容、通知内容、聊天内容或输入内容。\n\n"
+        "术语要求：learning_output_score 只能称为“Windows 学习记录”或“Windows/R 学习记录”；"
+        "含义是文件与 R 命令留下的学习过程痕迹。"
+        "不要把该指标描述为学习完成物、最终交付物、掌握程度或最终结果。\n\n"
         "输出必须分成两个大部分：\n\n"
         "一、原有总结\n"
         "保留日报总结风格，包含：今日概况、主要风险、明日建议。\n\n"
@@ -163,6 +174,34 @@ def call_openai_compatible(api_base_url: str, api_key: str, model: str, prompt: 
     return data["choices"][0]["message"]["content"]
 
 
+def normalize_review_terms(review_text: str | None) -> str | None:
+    if not review_text:
+        return review_text
+    replacements = {
+        "学习产出": "Windows 学习记录",
+        "学习输出": "Windows 学习记录",
+        "文件产出": "文件记录",
+        "产出痕迹": "学习记录痕迹",
+        "输出痕迹": "学习记录痕迹",
+        "产出指标": "Windows 学习记录指标",
+        "输出指标": "Windows 学习记录指标",
+        "产出分数": "Windows 学习记录分数",
+        "输出分数": "Windows 学习记录分数",
+        "高产出": "高记录",
+        "低产出": "低记录",
+        "输出目标": "记录目标",
+        "产出目标": "记录目标",
+        "输出实践": "记录实践",
+        "产出": "记录",
+        "输出": "记录",
+        "成果": "最终结果",
+    }
+    normalized = review_text
+    for old, new in replacements.items():
+        normalized = normalized.replace(old, new)
+    return normalized
+
+
 def save_review(conn: sqlite3.Connection, target_date: str, prompt: str, review_text: str | None, model: str) -> None:
     conn.execute(
         """
@@ -202,7 +241,7 @@ def main() -> None:
                 print(review_text)
         else:
             print("AI API not configured. Saved prompt only.")
-        save_review(conn, str(metrics["date"]), prompt, review_text, model)
+        save_review(conn, str(metrics["date"]), prompt, normalize_review_terms(review_text), model)
         print(f"Review row saved for {metrics['date']}.")
     finally:
         conn.close()

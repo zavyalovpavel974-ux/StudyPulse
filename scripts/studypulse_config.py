@@ -21,6 +21,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "adb_package_name": "com.studypulse.android",
         "adb_remote_dir": "/sdcard/Android/data/com.studypulse.android/files/exports",
     },
+    "focus": {
+        "export_dir": "data\\focus_exports",
+        "screenshot_inbox_dir": "%USERPROFILE%\\Desktop\\focus_screenshots",
+        "vision_model": "",
+    },
     "study_roots": [],
     "tracked_extensions": [
         ".R",
@@ -105,6 +110,16 @@ def expand_config_path(value: str | Path, *, base: Path | None = None) -> Path:
 def android_export_inbox_dir(config: dict[str, Any] | None = None) -> Path:
     cfg = config or load_config()
     return expand_config_path(cfg.get("android", {}).get("export_inbox_dir", "%USERPROFILE%\\Desktop\\.json"))
+
+
+def focus_export_dir(config: dict[str, Any] | None = None) -> Path:
+    cfg = config or load_config()
+    return expand_config_path(cfg.get("focus", {}).get("export_dir", "data\\focus_exports"))
+
+
+def focus_screenshot_inbox_dir(config: dict[str, Any] | None = None) -> Path:
+    cfg = config or load_config()
+    return expand_config_path(cfg.get("focus", {}).get("screenshot_inbox_dir", "%USERPROFILE%\\Desktop\\focus_screenshots"))
 
 
 def configured_email_recipients(config: dict[str, Any] | None = None) -> list[str]:
