@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -44,6 +45,9 @@ def latest_metrics(conn: sqlite3.Connection) -> dict:
         "distracting_app_minutes",
         "distracting_ratio",
         "app_open_count",
+        "distracting_app_open_count",
+        "distracting_open_rate_per_hour",
+        "switch_penalty",
         "total_study_files_count",
         "study_files_modified_7d_count",
         "study_files_modified_count",
@@ -68,7 +72,8 @@ def latest_context(conn: sqlite3.Connection) -> dict:
         for row in conn.execute(
             """
             SELECT date, phone_total_minutes, study_app_minutes, focus_minutes, focus_session_count, distracting_app_minutes,
-                   distracting_ratio, study_files_modified_count, r_command_count,
+                   distracting_ratio, distracting_app_open_count, distracting_open_rate_per_hour, switch_penalty,
+                   study_files_modified_count, r_command_count,
                    learning_output_score, distraction_risk_score
             FROM daily_metrics
             WHERE date <= ?
@@ -156,22 +161,33 @@ def call_openai_compatible(api_base_url: str, api_key: str, model: str, prompt: 
         ],
         "temperature": 0.4,
     }
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"AI API HTTP {exc.code}: {detail}") from exc
-    return data["choices"][0]["message"]["content"]
+    encoded_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        request = urllib.request.Request(
+            url,
+            data=encoded_body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            return data["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"AI API HTTP {exc.code}: {detail}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            last_error = exc
+            if attempt < 3:
+                print(f"AI API transient error on attempt {attempt}/3: {exc}; retrying...")
+                time.sleep(5 * attempt)
+                continue
+            raise last_error
+    raise RuntimeError("AI API call failed without a captured error")
 
 
 def normalize_review_terms(review_text: str | None) -> str | None:

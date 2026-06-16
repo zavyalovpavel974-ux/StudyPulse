@@ -454,7 +454,6 @@ def render(payload: dict) -> str:
       <h2>RStudio / R 学习痕迹</h2>
       <div id="rSummary"></div>
     </div>
-    <div class="panel wide" id="focusSessions"></div>
     <div class="panel wide">
       <h2>Windows 学习多日趋势</h2>
       <svg id="outputTrendChart" class="chart" viewBox="0 0 760 260"></svg>
@@ -484,7 +483,7 @@ const categoryNames = {{all:"全部", study:"学习", tool:"工具", social:"社
 const metricMeta = {{
   learning_input_score:[["含义","学习 App 时长、工具使用、R 活动和 Windows 学习记录共同形成的学习情况"],["适合观察","今天是否把主要行为投入到学习对象上"],["风险","只代表过程强度，不直接等同掌握程度"]],
   learning_output_score:[["含义","Windows 文件和 R 命令形成的学习记录信号"],["适合观察","R 语言、统计作业等学习过程是否留下可复查的脚本、笔记或文件"],["风险","这不是最终结果或掌握程度指标，未保存文件会被低估"]],
-  distraction_risk_score:[["含义","娱乐、社交、游戏相对总使用的压力"],["适合观察","学习前后是否被高刺激应用吞掉"],["风险","必要社交可能被误判"]],
+  distraction_risk_score:[["含义","分心类 App 占比叠加分心类高频切换"],["适合观察","学习前后是否被高刺激应用吞掉"],["风险","必要社交可能被误判"]],
   r_activity_score:[["含义","RStudio/R 相关操作的活跃程度"],["适合观察","统计作业是否进入实际代码阶段"],["风险","只看命令数量不看代码质量"]],
 }};
 const metricFormulas = [
@@ -495,7 +494,8 @@ const metricFormulas = [
   ["分心占比", "分心 App 时长占手机总使用时长比例", "distracting_ratio = distracting_app_minutes / phone_total_minutes"],
   ["学习情况分", "学习 App 统计为主，Windows 学习记录作为 R/作业过程的辅助信号，最高 100", "learning_input_score = min(100, study_app_minutes*0.22 + tool_app_minutes*0.08 + r_command_count*0.25 + learning_output_score*0.25)"],
   ["Windows 学习记录分", "Windows 学习文件修改、新建、R 命令形成的过程记录信号，最高 100", "learning_output_score = min(100, file_signal + r_signal)"],
-  ["分心风险分", "分心占比和高频切换共同推高风险，最高 100", "distraction_risk_score = min(100, distracting_ratio * 100 + switch_penalty)"],
+  ["分心切换惩罚", "只统计社交、娱乐、游戏类 App 的打开频率，惩罚最高 25", "switch_penalty = min(25, distracting_app_open_count / max(phone_total_minutes / 60, 1) * 2)"],
+  ["分心风险分", "分心占比为主，分心类高频切换作为辅助风险，最高 100", "distraction_risk_score = min(100, distracting_ratio * 100 + switch_penalty)"],
   ["R 活跃度", "R 命令、可视化、建模操作的活跃程度", "r_activity_score = weighted(command_count, visualization_count, modeling_count)"]
 ];
 let appSort = "time";
@@ -693,11 +693,11 @@ function renderKpis() {{
     ["手机总使用", mins(l.phone_total_minutes), "今日数字行为总量"],
     ["学习 App", mins(l.study_app_minutes), `含番茄 ToDo ${{mins(l.focus_minutes || 0)}}`],
     ["Windows 学习", Number(l.learning_output_score).toFixed(1), "文件 + R 记录"],
-    ["分心风险", Number(l.distraction_risk_score).toFixed(1), `分心占比 ${{pct(l.distracting_ratio)}}`],
+    ["分心风险", Number(l.distraction_risk_score).toFixed(1), `分心占比 ${{pct(l.distracting_ratio)}} / 切换惩罚 +${{Number(l.switch_penalty || 0).toFixed(1)}}`],
   ];
   document.getElementById("kpis").innerHTML = items.map(x => `<div class="card"><div class="label">${{x[0]}}</div><div class="value">${{x[1]}}</div><div class="delta">${{x[2]}}</div></div>`).join("");
   setRiskDial(l.distraction_risk_score);
-  document.getElementById("riskText").textContent = `分心类 App 占比 ${{pct(l.distracting_ratio)}}`;
+  document.getElementById("riskText").textContent = `分心类 App 占比 ${{pct(l.distracting_ratio)}} · 分心切换 +${{Number(l.switch_penalty || 0).toFixed(1)}}`;
   renderSourceDeck();
 }}
 
@@ -842,15 +842,12 @@ function renderOutputTrend() {{
   const latestRow = rows.at(-1) || {{value:0}};
   const trendRows = payload.output_trends || [];
   const latestTrend = trendRows.at(-1) || {{}};
-  document.getElementById("outputTrendMeta").innerHTML = `<div class="meter-chip"><small>latest score</small><strong>${{Number(latestRow.value || 0).toFixed(1)}}</strong></div><div class="meter-chip"><small>focus</small><strong>${{mins(latestTrend.focus_minutes ?? latest().focus_minutes ?? 0)}}</strong></div><div class="meter-chip"><small>file records</small><strong>${{latestTrend.total_study_files_count ?? latest().total_study_files_count ?? 0}}</strong></div><div class="meter-chip"><small>R commands</small><strong>${{latestTrend.r_command_count ?? latest().r_command_count ?? 0}}</strong></div>`;
+  const modifiedToday = Number(latestTrend.study_files_modified_count ?? latest().study_files_modified_count ?? 0);
+  document.getElementById("outputTrendMeta").innerHTML = `<div class="meter-chip"><small>latest score</small><strong>${{Number(latestRow.value || 0).toFixed(1)}}</strong></div><div class="meter-chip"><small>file records</small><strong>${{latestTrend.total_study_files_count ?? latest().total_study_files_count ?? 0}}</strong></div><div class="meter-chip"><small>modified today</small><strong>${{modifiedToday}}</strong></div><div class="meter-chip"><small>R commands</small><strong>${{latestTrend.r_command_count ?? latest().r_command_count ?? 0}}</strong></div>`;
 }}
 
 function renderOutput() {{
   document.getElementById("fileTable").innerHTML = payload.files.map(f => `<tr><td>${{esc(f.extension)}}</td><td>${{esc(f.activity_type)}}</td><td>${{f.count}}</td></tr>`).join("");
-  const focusHtml = (payload.focus_sessions || []).length
-    ? `<h2>番茄 ToDo 学习会话</h2><div class="table-wrap"><table><thead><tr><th>任务</th><th>时间</th><th>时长</th><th>来源</th></tr></thead><tbody>${{payload.focus_sessions.map(s => `<tr><td>${{esc(s.title)}}</td><td>${{esc((s.start_time || "") + (s.end_time ? " - " + s.end_time : ""))}}</td><td>${{mins(s.minutes)}}</td><td>${{esc(s.source || "manual")}}</td></tr>`).join("")}}</tbody></table></div>`
-    : `<h2>番茄 ToDo 学习会话</h2><p class="muted">尚未导入 focus_*.json；当前学习情况主要来自 App 与文件/R 信号。</p>`;
-  document.getElementById("focusSessions").innerHTML = focusHtml;
   const total = payload.files.reduce((sum,f)=>sum+Number(f.count||0),0);
   document.getElementById("evidenceHeat").innerHTML = Array.from({{length:24}}, (_,i) => `<span class="${{i < Math.min(24,total) ? "hot" : ""}}" title="文件信号 ${{i+1}}"></span>`).join("");
   const r = payload.r_summary || {{}};

@@ -24,6 +24,7 @@ WINDOWS_SCAN_DIR = PROJECT_ROOT / "data" / "scans"
 R_HISTORY_PATH = PROJECT_ROOT / "sample_data" / "r_history_sample.Rhistory"
 DAILY_SAMPLE_PATH = PROJECT_ROOT / "sample_data" / "daily_metrics_sample.csv"
 TOMATO_TODO_PACKAGE = "com.plan.kot32.tomatotime"
+DISTRACTING_CATEGORIES = {"social", "entertainment", "game"}
 
 
 R_FUNCTION_RE = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z.][A-Za-z0-9_.]*)\s*\(")
@@ -111,6 +112,18 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
+def calculate_distraction_risk(
+    distracting_ratio: float,
+    distracting_open_count: int,
+    phone_total_minutes: float,
+) -> tuple[float, float, float]:
+    phone_hours = max(phone_total_minutes / 60, 1.0)
+    distracting_open_rate = distracting_open_count / phone_hours
+    switch_penalty = min(25.0, distracting_open_rate * 2)
+    score = min(100.0, distracting_ratio * 100 + switch_penalty)
+    return score, distracting_open_rate, switch_penalty
+
+
 def connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -137,6 +150,9 @@ def ensure_daily_metrics_columns(conn: sqlite3.Connection) -> None:
         "study_files_modified_7d_count": "INTEGER NOT NULL DEFAULT 0",
         "focus_minutes": "REAL NOT NULL DEFAULT 0",
         "focus_session_count": "INTEGER NOT NULL DEFAULT 0",
+        "distracting_app_open_count": "INTEGER NOT NULL DEFAULT 0",
+        "distracting_open_rate_per_hour": "REAL NOT NULL DEFAULT 0",
+        "switch_penalty": "REAL NOT NULL DEFAULT 0",
     }
     for column, ddl in additions.items():
         if column not in columns:
@@ -761,6 +777,19 @@ def apply_focus_sessions_to_tomato_app(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def get_windows_activity_dates(conn: sqlite3.Connection) -> list[str]:
+    return [
+        row["date"]
+        for row in conn.execute(
+            """
+            SELECT DISTINCT date
+            FROM windows_file_activity
+            ORDER BY date
+            """
+        ).fetchall()
+    ]
+
+
 def classify_r_command(line: str) -> tuple[str, list[str]]:
     functions = R_FUNCTION_RE.findall(line)
     for category, names in COMMAND_RULES.items():
@@ -908,6 +937,7 @@ def generate_daily_metrics(conn: sqlite3.Connection, date: str) -> None:
         (date,),
     ).fetchall()
     by_category = {row["category"]: float(row["minutes"] or 0) for row in app_rows}
+    opens_by_category = {row["category"]: int(row["opens"] or 0) for row in app_rows}
     app_open_count = sum(int(row["opens"] or 0) for row in app_rows)
     phone_total = sum(by_category.values())
     study = by_category.get("study", 0.0)
@@ -917,6 +947,7 @@ def generate_daily_metrics(conn: sqlite3.Connection, date: str) -> None:
     game = by_category.get("game", 0.0)
     distracting = social + entertainment + game
     distracting_ratio = distracting / phone_total if phone_total else 0.0
+    distracting_app_open_count = sum(opens_by_category.get(category, 0) for category in DISTRACTING_CATEGORIES)
 
     recent_start = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=6)).strftime("%Y-%m-%d")
     total_file_count = int(conn.execute("SELECT COUNT(*) FROM windows_file_activity").fetchone()[0] or 0)
@@ -984,7 +1015,11 @@ def generate_daily_metrics(conn: sqlite3.Connection, date: str) -> None:
         + r_command_count * 0.25
         + learning_output_score * 0.25,
     )
-    distraction_risk_score = min(100.0, distracting_ratio * 100 + app_open_count * 0.2)
+    distraction_risk_score, distracting_open_rate, switch_penalty = calculate_distraction_risk(
+        distracting_ratio,
+        distracting_app_open_count,
+        phone_total,
+    )
     r_activity_score = min(100.0, r_command_count * 1.2 + r_visualization_count * 2 + r_modeling_count * 3)
 
     conn.execute(
@@ -993,13 +1028,14 @@ def generate_daily_metrics(conn: sqlite3.Connection, date: str) -> None:
             date, phone_total_minutes, study_app_minutes, focus_minutes, focus_session_count, tool_app_minutes,
             social_app_minutes, entertainment_app_minutes, game_app_minutes,
             distracting_app_minutes, distracting_ratio, app_open_count,
+            distracting_app_open_count, distracting_open_rate_per_hour, switch_penalty,
             total_study_files_count, study_files_modified_7d_count,
             study_files_modified_count, study_files_created_count,
             r_command_count, r_visualization_count, r_modeling_count,
             learning_input_score, learning_output_score, distraction_risk_score,
             r_activity_score, generated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             date,
@@ -1014,6 +1050,9 @@ def generate_daily_metrics(conn: sqlite3.Connection, date: str) -> None:
             distracting,
             distracting_ratio,
             app_open_count,
+            distracting_app_open_count,
+            distracting_open_rate,
+            switch_penalty,
             total_file_count,
             recent_file_count,
             modified_count,
@@ -1036,31 +1075,44 @@ def import_sample_daily_history(conn: sqlite3.Connection) -> None:
     with DAILY_SAMPLE_PATH.open("r", encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
     for row in rows:
+        phone_total = float(row["phone_total_minutes"])
+        distracting_ratio = float(row["distracting_ratio"])
+        app_open_count = int(float(row["app_open_count"]))
+        distracting_app_open_count = round(app_open_count * distracting_ratio)
+        distraction_risk_score, distracting_open_rate, switch_penalty = calculate_distraction_risk(
+            distracting_ratio,
+            distracting_app_open_count,
+            phone_total,
+        )
         conn.execute(
             """
             INSERT OR IGNORE INTO daily_metrics (
                 date, phone_total_minutes, study_app_minutes, tool_app_minutes,
                 social_app_minutes, entertainment_app_minutes, game_app_minutes,
                 distracting_app_minutes, distracting_ratio, app_open_count,
+                distracting_app_open_count, distracting_open_rate_per_hour, switch_penalty,
                 total_study_files_count, study_files_modified_7d_count,
                 study_files_modified_count, study_files_created_count,
                 r_command_count, r_visualization_count, r_modeling_count,
                 learning_input_score, learning_output_score, distraction_risk_score,
                 r_activity_score, generated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["date"],
-                float(row["phone_total_minutes"]),
+                phone_total,
                 float(row["study_app_minutes"]),
                 float(row["tool_app_minutes"]),
                 float(row["social_app_minutes"]),
                 float(row["entertainment_app_minutes"]),
                 float(row["game_app_minutes"]),
                 float(row["distracting_app_minutes"]),
-                float(row["distracting_ratio"]),
-                int(float(row["app_open_count"])),
+                distracting_ratio,
+                app_open_count,
+                distracting_app_open_count,
+                distracting_open_rate,
+                switch_penalty,
                 int(float(row["study_files_modified_count"])) + int(float(row["study_files_created_count"])),
                 int(float(row["study_files_modified_count"])),
                 int(float(row["study_files_modified_count"])),
@@ -1070,7 +1122,7 @@ def import_sample_daily_history(conn: sqlite3.Connection) -> None:
                 int(float(row["r_modeling_count"])),
                 float(row["learning_input_score"]),
                 float(row["learning_output_score"]),
-                float(row["distraction_risk_score"]),
+                distraction_risk_score,
                 float(row["r_activity_score"]),
                 row["generated_at"],
             ),
@@ -1236,7 +1288,10 @@ def main() -> None:
     import_windows_file_activity(conn)
     focus_dates = import_focus_sessions(conn)
     apply_focus_sessions_to_tomato_app(conn)
-    target_date = sorted(imported_dates)[-1]
+    signal_dates = sorted(set(imported_dates + focus_dates + get_windows_activity_dates(conn)))
+    if not signal_dates:
+        raise RuntimeError("No Android, focus, or Windows activity dates were imported")
+    target_date = signal_dates[-1]
     parse_r_sources(conn, target_date)
     import_sample_daily_history(conn)
     generate_daily_metrics(conn, target_date)

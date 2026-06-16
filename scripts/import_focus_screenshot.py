@@ -7,8 +7,10 @@ import mimetypes
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,23 @@ from studypulse_config import focus_export_dir, focus_screenshot_inbox_dir, load
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+STATUS_PATH = PROJECT_ROOT / "data" / "focus_import_status.json"
+
+
+def now_text() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def write_status(status: str, message: str, **detail: Any) -> None:
+    STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "updated_at": now_text(),
+        "status": status,
+        "message": message,
+        **detail,
+    }
+    STATUS_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def latest_image(folder: Path) -> Path | None:
@@ -82,10 +101,16 @@ def normalize_focus_json(data: dict[str, Any], source_image: Path) -> dict[str, 
     if not normalized_sessions:
         raise ValueError("recognized result has no positive-duration sessions")
 
+    source_date = datetime.fromtimestamp(source_image.stat().st_mtime).date().isoformat()
+    recognized_date = str(data["date"])
+    final_date = source_date or recognized_date
+
     return {
         "source": "tomato_todo_screenshot",
         "source_image": str(source_image),
-        "date": str(data["date"]),
+        "date": final_date,
+        "recognized_date": recognized_date,
+        "date_source": "screenshot_file_mtime",
         "total_focus_minutes": sum(int(item["minutes"]) for item in normalized_sessions),
         "focus_count": len(normalized_sessions),
         "sessions": normalized_sessions,
@@ -115,19 +140,33 @@ def call_vision_model(api_base_url: str, api_key: str, model: str, image_path: P
         ],
         "temperature": 0,
     }
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=90) as response:
-        body = json.loads(response.read().decode("utf-8"))
-    content = body["choices"][0]["message"]["content"]
-    return extract_json(content)
+    encoded_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        request = urllib.request.Request(
+            url,
+            data=encoded_body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            content = body["choices"][0]["message"]["content"]
+            return extract_json(content)
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, TimeoutError) as exc:
+            last_error = exc
+            if attempt < 3:
+                print(f"Focus vision API transient error on attempt {attempt}/3: {exc}; retrying...")
+                time.sleep(5 * attempt)
+                continue
+            raise last_error
+    raise RuntimeError("Focus vision API call failed without a captured error")
 
 
 def write_focus_export(data: dict[str, Any], config: dict[str, Any]) -> Path:
@@ -154,9 +193,12 @@ def main() -> int:
     if image_path is None:
         message = f"No focus screenshot found in {folder}"
         print(message)
+        write_status("skipped", message, screenshot_inbox=str(folder))
         return 0 if args.optional else 1
     if not image_path.exists():
-        print(f"Focus screenshot not found: {image_path}", file=sys.stderr)
+        message = f"Focus screenshot not found: {image_path}"
+        print(message, file=sys.stderr)
+        write_status("failed", message, screenshot=str(image_path))
         return 0 if args.optional else 1
 
     mimo = config.get("mimo", {})
@@ -168,6 +210,14 @@ def main() -> int:
     if not api_base_url or not model or not api_key:
         print("Focus screenshot import skipped: missing vision API config or API key.")
         print(f"Need api_base_url, model, and environment variable {api_key_env}.")
+        write_status(
+            "skipped",
+            "missing vision API config or API key",
+            screenshot=str(image_path),
+            model=model,
+            api_base_url=api_base_url,
+            api_key_env=api_key_env,
+        )
         return 0 if args.optional else 1
 
     try:
@@ -190,13 +240,36 @@ def main() -> int:
                 "or use manual focus JSON import.",
                 file=sys.stderr,
             )
+        write_status(
+            "failed",
+            f"HTTPError {exc.code}: {exc.reason}",
+            screenshot=str(image_path),
+            response_body=body[:1000],
+            model=model,
+        )
         return 0 if args.optional else 1
     except (urllib.error.URLError, TimeoutError, KeyError, json.JSONDecodeError, ValueError) as exc:
         print(f"Focus screenshot import failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        write_status(
+            "failed",
+            f"{type(exc).__name__}: {exc}",
+            screenshot=str(image_path),
+            model=model,
+        )
         return 0 if args.optional else 1
 
     print(f"Focus screenshot imported: {target}")
     print(f"Date: {focus_json['date']} | minutes: {focus_json['total_focus_minutes']} | sessions: {focus_json['focus_count']}")
+    write_status(
+        "success",
+        "Focus screenshot imported",
+        screenshot=str(image_path),
+        target=str(target),
+        date=focus_json["date"],
+        total_focus_minutes=focus_json["total_focus_minutes"],
+        focus_count=focus_json["focus_count"],
+        model=model,
+    )
     return 0
 
 

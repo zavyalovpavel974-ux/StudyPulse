@@ -71,6 +71,20 @@ function Resolve-Adb {
     return $null
 }
 
+function Invoke-Adb {
+    param([string[]]$Arguments)
+
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & $ResolvedAdb @Arguments 2>&1
+        $script:LastAdbExitCode = $LASTEXITCODE
+        return @($output | ForEach-Object { $_.ToString() })
+    } finally {
+        $ErrorActionPreference = $oldPreference
+    }
+}
+
 if (-not $RemoteDir) {
     $RemoteDir = "/sdcard/Android/data/$PackageName/files/exports"
 }
@@ -100,50 +114,51 @@ if ($DeviceSerial) {
 }
 
 try {
-    $stateOutput = & $ResolvedAdb @AdbDeviceArgs get-state 2>$null
+    $stateOutput = Invoke-Adb -Arguments ($AdbDeviceArgs + @("get-state"))
 } catch {
     Write-ProgressLog ("Progress: adb.exe could not run; skip Android ADB JSON sync - {0}" -f $_.Exception.Message)
     Write-SyncStatus -Status "failed" -Message ("adb.exe could not run: {0}" -f $_.Exception.Message)
     exit 0
 }
 
-if ($LASTEXITCODE -ne 0 -or ($stateOutput -join "").Trim() -ne "device") {
+if ($script:LastAdbExitCode -ne 0 -or -not ($stateOutput | Where-Object { $_.Trim() -eq "device" })) {
     Write-ProgressLog "Progress: no authorized Android device found; skip Android ADB JSON sync"
-    Write-SyncStatus -Status "skipped" -Message "no authorized Android device found"
+    Write-SyncStatus -Status "skipped" -Message ("no authorized Android device found; adb output: {0}" -f (($stateOutput | Select-Object -Last 5) -join " | "))
     exit 0
 }
 
 try {
-    $remoteList = & $ResolvedAdb @AdbDeviceArgs shell "ls -t $RemoteDir/android_usage*.json 2>/dev/null" 2>$null
+    $remoteList = Invoke-Adb -Arguments ($AdbDeviceArgs + @("shell", "ls -t $RemoteDir/android_usage*.json 2>/dev/null"))
 } catch {
     Write-ProgressLog ("Progress: adb shell failed; skip Android ADB JSON sync - {0}" -f $_.Exception.Message)
     Write-SyncStatus -Status "failed" -Message ("adb shell failed: {0}" -f $_.Exception.Message)
     exit 0
 }
 
-if ($LASTEXITCODE -ne 0 -or -not $remoteList) {
+if ($script:LastAdbExitCode -ne 0 -or -not $remoteList) {
     Write-ProgressLog "Progress: no Android JSON export found on device; skip Android ADB JSON sync"
-    Write-SyncStatus -Status "skipped" -Message "no Android JSON export found on device"
+    Write-SyncStatus -Status "skipped" -Message ("no Android JSON export found on device; adb output: {0}" -f (($remoteList | Select-Object -Last 5) -join " | "))
     exit 0
 }
 
-$latestRemote = ($remoteList | Where-Object { $_ -match "android_usage.*\.json" } | Select-Object -First 1).Trim()
+$latestRemote = ($remoteList | Where-Object { $_ -match "^/.*android_usage.*\.json\s*$" } | Select-Object -First 1).Trim()
 if (-not $latestRemote) {
     Write-ProgressLog "Progress: no valid Android JSON export path returned by adb; skip Android ADB JSON sync"
-    Write-SyncStatus -Status "skipped" -Message "no valid Android JSON export path returned by adb"
+    Write-SyncStatus -Status "skipped" -Message ("no valid Android JSON export path returned by adb; adb output: {0}" -f (($remoteList | Select-Object -Last 8) -join " | "))
     exit 0
 }
 
 Write-ProgressLog "Progress: pull latest Android JSON $latestRemote"
 try {
-    & $ResolvedAdb @AdbDeviceArgs pull $latestRemote $DestinationDir | Out-Host
+    $pullOutput = Invoke-Adb -Arguments ($AdbDeviceArgs + @("pull", $latestRemote, $DestinationDir))
+    $pullOutput | Out-Host
 } catch {
     Write-SyncStatus -Status "failed" -Message ("adb pull failed: {0}" -f $_.Exception.Message)
     throw "adb pull failed: $($_.Exception.Message)"
 }
 
-if ($LASTEXITCODE -ne 0) {
-    Write-SyncStatus -Status "failed" -Message "adb pull failed"
+if ($script:LastAdbExitCode -ne 0) {
+    Write-SyncStatus -Status "failed" -Message ("adb pull failed; adb output: {0}" -f (($pullOutput | Select-Object -Last 8) -join " | "))
     throw "adb pull failed"
 }
 

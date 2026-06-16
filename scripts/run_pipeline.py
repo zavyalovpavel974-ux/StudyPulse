@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PYTHON = sys.executable
 STATUS_PATH = PROJECT_ROOT / "data" / "pipeline_status.json"
 ADB_STATUS_PATH = PROJECT_ROOT / "data" / "adb_sync_status.json"
+FOCUS_STATUS_PATH = PROJECT_ROOT / "data" / "focus_import_status.json"
 
 
 def log(message: str) -> None:
@@ -51,11 +52,46 @@ def mark_step(status: dict, name: str, state: str, message: str = "", detail: di
     write_status(status)
 
 
+def parse_android_export_meta(path: Path) -> dict:
+    meta = {
+        "path": str(path),
+        "name": path.name,
+        "modified_at": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+        "date": "",
+        "generated_at": "",
+        "valid": False,
+        "message": "",
+    }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        meta["date"] = str(data.get("date") or "")
+        meta["generated_at"] = str(data.get("generated_at") or "")
+        meta["valid"] = True
+    except Exception as exc:
+        meta["message"] = str(exc)
+    return meta
+
+
+def android_export_sort_key(path: Path) -> tuple[str, str, float]:
+    meta = parse_android_export_meta(path)
+    return (
+        str(meta.get("date") or ""),
+        str(meta.get("generated_at") or ""),
+        path.stat().st_mtime,
+    )
+
+
 def find_latest_android_export(folder: Path) -> Path | None:
-    candidates = list(folder.glob("android_usage*.json"))
+    candidates = [path for path in folder.glob("android_usage*.json") if path.is_file()]
     if candidates:
-        return max(candidates, key=lambda path: path.stat().st_mtime)
+        return max(candidates, key=android_export_sort_key)
     return None
+
+
+def describe_android_export(path: Path | None) -> dict:
+    if not path:
+        return {}
+    return parse_android_export_meta(path)
 
 
 def describe_android_export_folder(folder: Path) -> None:
@@ -153,6 +189,7 @@ def main(argv: list[str]) -> None:
         "sample_mode": sample_mode,
         "android_export_folder": None,
         "selected_android_json": None,
+        "selected_android_json_meta": {},
         "adb_sync": {},
         "reports": {
             "static_html": str(PROJECT_ROOT / "reports" / "studypulse_sample_report.html"),
@@ -190,12 +227,28 @@ def main(argv: list[str]) -> None:
         android_json = Path(explicit_android_json).expanduser().resolve() if explicit_android_json else find_latest_android_export(export_folder)
 
     if android_json:
+        android_meta = describe_android_export(android_json)
         log(f"Progress: import Android data {android_json}")
         status["selected_android_json"] = str(android_json)
+        status["selected_android_json_meta"] = android_meta
         write_status(status)
-        mark_step(status, "import_android_json", "running", str(android_json))
+        today = datetime.now().date().isoformat()
+        selected_date = str(android_meta.get("date") or "")
+        if selected_date and selected_date != today and not sample_mode:
+            log(f"Progress: selected Android JSON is not today: date={selected_date}, today={today}")
+            mark_step(
+                status,
+                "android_json_freshness",
+                "warning",
+                f"选中的 Android JSON 内部日期是 {selected_date}，不是今天 {today}；报告会继续使用该文件，但不是今日最新手机数据。",
+                android_meta,
+            )
+        else:
+            mark_step(status, "android_json_freshness", "completed", f"Android JSON date={selected_date or 'unknown'}", android_meta)
+        mark_step(status, "import_android_json", "running", str(android_json), android_meta)
         run([PYTHON, str(PROJECT_ROOT / "scripts" / "import_android_export.py"), str(android_json)])
-        mark_step(status, "import_android_json", "completed", str(android_json))
+        import_state = "warning" if selected_date and selected_date != today and not sample_mode else "completed"
+        mark_step(status, "import_android_json", import_state, str(android_json), android_meta)
     else:
         log(f"Progress: no android_usage*.json found in {export_folder}; keep existing Android data")
         mark_step(status, "import_android_json", "warning", "未找到新的 android_usage*.json，沿用已有数据库数据")
@@ -228,8 +281,20 @@ def main(argv: list[str]) -> None:
         for name, message, args, required in steps:
             log(message)
             mark_step(status, name, "running", message)
+            if name == "import_focus_screenshot" and FOCUS_STATUS_PATH.exists():
+                FOCUS_STATUS_PATH.unlink()
             code = run(args, required=required)
-            mark_step(status, name, "completed" if code == 0 else "warning", f"exit_code={code}")
+            if name == "import_focus_screenshot":
+                focus_detail = read_json(FOCUS_STATUS_PATH)
+                focus_status = str(focus_detail.get("status") or "")
+                if focus_status == "success":
+                    mark_step(status, name, "completed", str(focus_detail.get("message") or f"exit_code={code}"), focus_detail)
+                elif focus_status in {"failed", "skipped"}:
+                    mark_step(status, name, "warning", str(focus_detail.get("message") or f"exit_code={code}"), focus_detail)
+                else:
+                    mark_step(status, name, "warning", f"exit_code={code}; no focus import status file")
+            else:
+                mark_step(status, name, "completed" if code == 0 else "warning", f"exit_code={code}")
     except Exception as exc:
         status["status"] = "failed"
         status["finished_at"] = now_text()
